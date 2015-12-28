@@ -7,3 +7,4 @@ I use this on Drupal projects where I want to test some changes, such as applyin
 # Setup
 1.) Download the "post-checkout" file from this repository<br />
 2.) Put file in the hooks directory of your git enabled project so it appears like so: .git/hooks/post-checkout<br />
+3.) Edit file so the environment specific variables correspond to the correct values for your Drupal application<br />
