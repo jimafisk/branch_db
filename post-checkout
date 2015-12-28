@@ -1,0 +1,102 @@
+#!/bin/bash                                                                      
+
+# Set environment specific variables
+MYSQL_USER=YOUR_USER
+MYSQL_PW=YOUR_PASSWORD
+DOC_ROOT=PATH/TO/YOUR/APPLICATION
+DB_NAME=YOUR_DATABASE_NAME
+
+# Get the name of the branch that was checked out
+CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+
+# Get the name of the branch you were just on
+PREVIOUS_BRANCH=$(git rev-parse --abbrev-ref @{-1})
+
+# Preserve the original DB name instead of using "master"
+if [ $CURRENT_BRANCH == "master" ]; then
+  CURRENT_BRANCH=$DB_NAME
+fi
+if [ $PREVIOUS_BRANCH == "master" ]; then
+  PREVIOUS_BRANCH=$DB_NAME
+fi
+
+# Check if file that stores branches exists (Created first time script is run)
+if [ ! -f $DOC_ROOT/branch_list.txt ]; then
+  # Script hasn't been run, so ensure database is cloned from exising database, aka the original database
+  PREVIOUS_BRANCH=$DB_NAME
+  # No need to create branch_list.txt just yet
+fi
+
+# Get list of existing branches
+readarray BRANCH_LIST < $DOC_ROOT/branch_list.txt
+
+# Determine how many items are in the branch list
+BRANCH_LIST_LENGTH=${#BRANCH_LIST[@]}
+
+# Check if the current branch has been added to the list of branches
+for ((NUM=0; NUM < $BRANCH_LIST_LENGTH; NUM++)); do
+  if [ $CURRENT_BRANCH == ${BRANCH_LIST[$NUM]} ]; then
+    # Change Drupal's database connection
+    sudo sed -i "s#'database' => .*#'database' => '$CURRENT_BRANCH',#" $DOC_ROOT/sites/default/settings.php
+    # Set variable so we know that this branch already existed
+    FOUND="TRUE"
+  fi
+done
+
+# If the current branch was not found in the existing branch list...
+if [[ $FOUND != "TRUE" ]]; then
+
+  # Add the current branch to the list
+  echo $CURRENT_BRANCH >> $DOC_ROOT/branch_list.txt
+
+  # Create a new database for the current branch
+  mysqldump -u$MYSQL_USER -p"$MYSQL_PW" $PREVIOUS_BRANCH > $DOC_ROOT/branch_dump.sql # Clone db from last branch
+  mysqladmin -u$MYSQL_USER -p"$MYSQL_PW" create $CURRENT_BRANCH # Create a new db for the new branch
+  mysql -u$MYSQL_USER -p"$MYSQL_PW" $CURRENT_BRANCH < $DOC_ROOT/branch_dump.sql # Pipe the db clone into the new db
+  rm $DOC_ROOT/branch_dump.sql # Remove the exported database file
+
+  # Change Drupal's database connection
+  sudo sed -i "s#'database' => .*#'database' => '$CURRENT_BRANCH',#" $DOC_ROOT/sites/default/settings.php
+
+fi
+
+#########################
+### Cleanup databases ###
+#########################
+
+# Get all branches that aren't active
+VALID_BRANCH_LIST=( $(git branch -a | grep -v "*" | awk '{print $1}') )
+# Get the active branch as well and add it to the list
+VALID_BRANCH_LIST+=( $(git branch -a | grep "*" | awk '{print $2}') )
+
+# Determine how many items are in the valid branch list
+VALID_BRANCH_LIST_LENGTH=${#VALID_BRANCH_LIST[@]}
+
+# Account for any new items that were just added to text file of branches
+readarray UPDATED_BRANCH_LIST < $DOC_ROOT/branch_list.txt
+UPDATED_BRANCH_LIST_LENGTH=${#UPDATED_BRANCH_LIST[@]}
+
+# Loop through the text file of branches 
+for ((NUM_L=0; NUM_L < $UPDATED_BRANCH_LIST_LENGTH; NUM_L++)); do
+  # Set default
+  STILL_VALID="NO"
+  # Loop through list of currently existing branches
+  for ((NUM_VL=0; NUM_VL < $VALID_BRANCH_LIST_LENGTH; NUM_VL++)); do
+    # Check if the item from the file matches the current branches or original DB
+    if [ ${UPDATED_BRANCH_LIST[$NUM_L]} == ${VALID_BRANCH_LIST[$NUM_VL]} ] ||
+       [ ${UPDATED_BRANCH_LIST[$NUM_L]} == $DB_NAME ]; then
+      # The current item from the text file was found
+      STILL_VALID="YES"
+    fi
+  done
+  if [[ $STILL_VALID == "NO" ]]; then
+    # Delete the database for the branch that no longer exists
+    mysql -u$MYSQL_USER -p$MYSQL_PW -e "drop database if exists "${UPDATED_BRANCH_LIST[$NUM_L]}
+
+    # Remove the branch from our text file of branches
+    grep -xv ${UPDATED_BRANCH_LIST[$NUM_L]} $DOC_ROOT/branch_list.txt > $DOC_ROOT/tmp_branch_list.txt
+    cat $DOC_ROOT/tmp_branch_list.txt > $DOC_ROOT/branch_list.txt
+    rm $DOC_ROOT/tmp_branch_list.txt
+
+  fi
+done
