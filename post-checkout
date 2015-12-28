@@ -24,7 +24,8 @@ fi
 if [ ! -f $DOC_ROOT/branch_list.txt ]; then
   # Script hasn't been run, so ensure database is cloned from exising database, aka the original database
   PREVIOUS_BRANCH=$DB_NAME
-  # No need to create branch_list.txt just yet
+  # Stop script from trying to create original DB that already exists
+  echo $PREVIOUS_BRANCH > $DOC_ROOT/branch_list.txt
 fi
 
 # Get list of existing branches
